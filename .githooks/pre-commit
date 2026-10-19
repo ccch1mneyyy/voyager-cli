@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-node scripts/check-staged-size.mjs
+# Run the copy beside this hook: worktrees can share it through core.hooksPath.
+node "$(dirname "$0")/../scripts/check-staged-size.mjs"
