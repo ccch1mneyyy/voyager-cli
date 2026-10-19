@@ -42,7 +42,8 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "verify": "bun run format:check && bun run lint:check && bun run typecheck && bun run test",
-    "prepublishOnly": "bun run verify && bun run build"
+    "prepublishOnly": "bun run verify && bun run build",
+    "prepare": "node scripts/install-git-hooks.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.9.0",

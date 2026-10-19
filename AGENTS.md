@@ -13,3 +13,9 @@ can, in this order:
    section: older builds ignore an unknown section but drop a whole known section that gains a key.
 3. A new extension op or protocol change, only for a page capability that 1 and 2 cannot reach.
    The PR says why they cannot.
+
+## Small files
+
+The pre-commit hook (`scripts/check-staged-size.mjs`) blocks any staged file over 5,000 tokens
+(bytes / 4), existing files included. Lay out new code as small files by responsibility from the
+start; when the hook blocks, its message says how to split.
