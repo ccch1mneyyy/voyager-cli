@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 from pathlib import Path
 import re
 import sys
 import tempfile
+from unittest.mock import patch
 from kit_config import load_config, workspace_root
+import safe_files
 
 HEAD_RE = re.compile(r"^Version: (\d+)", re.M)
 
@@ -21,7 +22,8 @@ def request_path(workspace: Path, tag: str) -> Path:
 
 
 def append(request: Path, body: str) -> int:
-    old = request.read_text(encoding="utf-8") if request.exists() else ""
+    # utf-8-sig: a BOM added by a Windows editor would hide "Version:" and restart the count at 1.
+    old = request.read_text(encoding="utf-8-sig") if request.exists() else ""
     match = HEAD_RE.search(old)
     version = int(match.group(1)) + 1 if match else 1
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -30,9 +32,10 @@ def append(request: Path, body: str) -> int:
     new_entry = f"## Request {version} ({now})\n\n{body.strip()}\n"
     text = head + ("\n## " + entries.rstrip() + "\n" if entries else "") + "\n" + new_entry
     request.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=request.parent, delete=False) as pending:
-        pending.write(text.encode("utf-8"))
-    os.replace(pending.name, request)
+    try:
+        safe_files.write_atomic(request, text.encode("utf-8"), prefix=".request-")
+    except OSError as error:
+        raise OSError(f"request {version} was not published; {request.name} stayed unchanged ({error})") from error
     return version
 
 
@@ -54,7 +57,25 @@ def selftest() -> int:
                 pass
             else:
                 raise AssertionError("Expected a single task folder name")
-    print("selftest PASS: 8 checks")
+        bom = request_path(workspace, "bom-task")
+        bom.parent.mkdir()
+        bom.write_bytes("\ufeffVersion: 9\nUpdated: x\n\n## Request 9 (x)\n\nNine\n".encode("utf-8"))
+        assert append(bom, "Ten") == 10
+        assert bom.read_text(encoding="utf-8").startswith("Version: 10") and "Nine" in bom.read_text(encoding="utf-8")
+
+        def locked(src, dst):
+            raise PermissionError(32, "in use")
+        before = bom.read_bytes()
+        with patch.object(safe_files, "REPLACE_DELAY", 0), patch("os.replace", locked):
+            try:
+                append(bom, "Eleven")
+            except OSError as error:
+                assert "not published" in str(error)
+            else:
+                raise AssertionError("Expected a failed publish")
+        assert bom.read_bytes() == before
+        assert sorted(p.name for p in bom.parent.iterdir()) == ["REQUEST.md"]
+    print("selftest PASS: 13 checks")
     return 0
 
 
@@ -76,7 +97,7 @@ def main() -> int:
         if args.show:
             print(request.read_text(encoding="utf-8") if request.exists() else "(No requests yet)")
             return 0
-        body = args.file.read_text(encoding="utf-8") if args.file else (args.text or "")
+        body = args.file.read_text(encoding="utf-8-sig") if args.file else (args.text or "")
         if not body.strip():
             parser.error("provide request text or --file")
         version = append(request, body)

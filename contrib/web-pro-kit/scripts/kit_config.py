@@ -18,7 +18,7 @@ def load_config(config_path: str | Path | None = None) -> dict:
     path = Path(explicit).expanduser() if explicit else base / "web-pro-kit.json"
     config = {"workspace": None, "redact": []}
     if path.exists() or explicit:
-        config.update(json.loads(path.read_text(encoding="utf-8")))
+        config.update(json.loads(path.read_text(encoding="utf-8-sig")))  # Notepad may add a BOM.
     workspace = os.environ.get("VOYAGER_WEB_PRO_WORKSPACE", config["workspace"])
     if workspace:
         resolved = Path(workspace).expanduser()
@@ -77,6 +77,8 @@ def selftest() -> int:
             assert load_config() == {"workspace": None, "redact": []}
             path.write_text(json.dumps({"workspace": "workspace", "redact": ["sample"]}), encoding="utf-8")
             assert load_config(path)["redact"] == ["sample"]
+            path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+            assert load_config(path)["redact"] == ["sample"]
             assert workspace_root(load_config()) == workspace.resolve()
             with patch.dict(os.environ, {"VOYAGER_WEB_PRO_WORKSPACE": str(root)}):
                 assert workspace_root(load_config()) == root.resolve()
@@ -85,7 +87,7 @@ def selftest() -> int:
             with patch(__name__ + "._drive_roots", return_value=[root]):
                 (root / "Voyager-workspace").mkdir()
                 assert workspace_root({}) == (root / "Voyager-workspace").resolve()
-    print("selftest PASS: 6 checks")
+    print("selftest PASS: 7 checks")
     return 0
 
 
