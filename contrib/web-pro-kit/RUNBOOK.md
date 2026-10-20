@@ -5,6 +5,8 @@
 Keep this directory together. Use Python 3.12, Git, and a paired Voyager CLI; follow the
 [Voyager skill](../../skills/voyager/SKILL.md) for pairing. Commands below run from the checkout root;
 when using another project, substitute the kit's installed script paths.
+Check the interpreter first: `python3 --version` on macOS and Linux, `py -3.12 --version` or
+`python --version` on Windows. Commands below use `python3`; on Windows use the one that reported 3.12.
 
 Connect ChatGPT and Drive desktop to the same Google account. Create `Voyager-workspace` in
 `My Drive` or `我的云端硬盘`, with this layout:
@@ -26,7 +28,14 @@ Discovery checks Windows drive letters and user-profile Drive folders for both o
 and macOS `~/Library/CloudStorage/GoogleDrive-*/My Drive` or `我的云端硬盘`.
 Choose an explicit workspace when several accounts exist.
 On Linux, configure an rclone-mounted workspace, or export with `--out` and upload the files yourself.
-For manual transfer, also upload request changes and download task outputs before using the waiter.
+The request writer and the mirror replace files in place, which needs rclone's write cache:
+
+```sh
+rclone mount gdrive: ~/gdrive --vfs-cache-mode writes --daemon
+```
+
+With write-back caching a file reaches Drive only after rclone uploads it, so wait for the upload
+before dispatch. For manual transfer, also upload request changes and download task outputs before using the waiter.
 
 ## Choose what this project shares
 
@@ -42,24 +51,40 @@ build/** export-ignore
 ```
 
 Use `export-ignore` for private/generated paths and the config's `redact` list for private terms.
-The text layer applies home-path, identity, email and credential patterns and records locations in
-`_mirror/redactions.tsv`. Inspect the first export with `--out`; review paths and binary content too.
+The text layer applies home-path, identity, email and credential patterns, including quoted and unquoted
+values of keys such as `API_KEY=` or `password:`, and records locations in `_mirror/redactions.tsv`.
+UTF-16 text is redacted like UTF-8. Your login name and Git name/email are found automatically only
+when at least five characters long; add shorter ones to `redact`.
+Inspect the first export with `--out`; review paths and binary content too.
 Use `--assets` for images, audio or other binaries; matching identity terms exclude a whole binary file.
-Binary volumes group roughly 200 MB of input. Prepare symbolic links, submodules and external assets separately.
+Binary volumes group roughly 200 MB of input. Symbolic links and submodules are skipped; prepare them
+and external assets separately.
+
+When a file cannot be redacted safely it is not uploaded, and the rest of the export continues:
+a path containing a private term, an unclosed private key, a binary with an identity, or a non-UTF-8
+text file (such as GBK) containing a private term or credential pattern. Other non-UTF-8 files upload
+unchanged with a warning; convert them to UTF-8 to have them redacted. The terminal lists every file
+kept back, and `MIRROR.json` records them under `excluded_files` with the rule name, never the matched
+text; a path that contains a private term appears there only as `<path withheld: ...>`. `--report <file>`
+writes the full local list and must point outside the mirror folder. Names that differ only by case or
+Unicode normalization produce a warning, since they overwrite each other on Windows and macOS.
+The export stops if the repository has its own top-level `INDEX/` or `_mirror/` (any case).
 
 ## Publish the mirror
 
 ```sh
-python contrib/web-pro-kit/scripts/drive_mirror.py push --repo . --name sample --out ./mirror-preview
-python contrib/web-pro-kit/scripts/drive_mirror.py push --repo . --name sample --assets
-python contrib/web-pro-kit/scripts/drive_mirror.py status --repo . --name sample
+python3 contrib/web-pro-kit/scripts/drive_mirror.py push --repo . --name sample --out ./mirror-preview
+python3 contrib/web-pro-kit/scripts/drive_mirror.py push --repo . --name sample --assets
+python3 contrib/web-pro-kit/scripts/drive_mirror.py status --repo . --name sample
 ```
 
 The default destination is `<workspace>/repos/<project>`; `--out` selects the exact output directory.
+`--name` must be one folder name that is valid on Windows, macOS and Linux.
 It contains `MIRROR.json`, `<project>-text.zip` and optional `<project>-bin*.zip`.
 The text ZIP includes `INDEX/` and `_mirror/`. Each project uses its own destination; keep task files
-in the task folder. The publisher replaces its archives and removes obsolete volumes.
-Unchanged layers are reused; `--force` refreshes an export. After changing redaction terms, use
+in the task folder. The publisher writes each archive beside its target, checks it, replaces the old one,
+removes obsolete volumes and writes `MIRROR.json` last.
+Layers whose SHA-256 still matches are reused; `--force` rewrites every layer it publishes. After changing redaction terms, use
 `--assets` to refresh binaries too. Wait for Drive sync before dispatch.
 Ask the receiver to verify ZIP hashes and the full commit in both `MIRROR.json` and `_mirror/STAMP.json`,
 then extract into a new directory. Fetch binaries when needed and check `same_as_text_commit`.
@@ -71,12 +96,13 @@ Copy `request-channel/` to Drive's `tools/request-channel/`. Choose a fresh task
 Create its initial request, then append later changes using the same command:
 
 ```sh
-python contrib/web-pro-kit/scripts/drive_request.py review-alpha "Review the parser."
-python contrib/web-pro-kit/scripts/drive_request.py review-alpha --file additional-request.md
-python contrib/web-pro-kit/scripts/drive_request.py review-alpha --show
+python3 contrib/web-pro-kit/scripts/drive_request.py review-alpha "Review the parser."
+python3 contrib/web-pro-kit/scripts/drive_request.py review-alpha --file additional-request.md
+python3 contrib/web-pro-kit/scripts/drive_request.py review-alpha --show
 ```
 
 One writer appends entries and increments `Version: N`; Drive sync carries them to the next checkpoint.
+If `REQUEST.md` stays locked by another program, the writer says the request was not published; retry it.
 Adapt `templates/task-header.md` and the blank `templates/project-header.md` to the project.
 Paste `request-channel/PROMPT-BLOCK.md` into the indicated slot.
 Set `{{WORKSPACE}}` to the Drive-visible task folder and `{{TOOLS}}` to its shared request-channel folder.
@@ -92,16 +118,27 @@ voyager ask --json --no-wait --timebox 70 $prompt
 voyager job wait <job-id> --timeout 10m --json
 ```
 
+On macOS and Linux, pass the prompt as one argument:
+
+```sh
+prompt="$(cat ./PROMPT.md)"
+voyager ask --json --no-wait --timebox 70 "$prompt"
+voyager job wait <job-id> --timeout 10m --json
+```
+
 Voyager supplies the 70-minute wrap-up instructions. Continue waiting on the same job after a timeout.
 Use its `--approve-apps once|always` when authorized; otherwise handle the reported approval card.
 Run the waiter in the local agent's background-job facility:
 
 ```sh
-python contrib/web-pro-kit/scripts/drive_wait.py "<local-workspace>/review-alpha/DONE.txt"
+python3 contrib/web-pro-kit/scripts/drive_wait.py "<local-workspace>/review-alpha/DONE.txt"
 ```
 
-Exit 0 reports the marker; exit 2 reports new output followed by ten quiet minutes without it.
-Review the conversation, ZIP and `NOTES.md` on either result. `--quiet 0` disables the fallback;
+Exit 0 reports the marker once it has content; an empty or still-syncing marker keeps the waiter polling.
+Exit 2 reports new output followed by ten quiet minutes without it; system files such as `.DS_Store`,
+`desktop.ini`, Office `~$` locks and sync `*.tmp` files do not count as output.
+Review the conversation, ZIP and `NOTES.md` on either result. Extract the result ZIP into a new folder;
+names that differ only by case collide when extracted on Windows or macOS. `--quiet 0` disables the fallback;
 `--every` sets polling seconds. Reusing a task folder requires removing its previous marker first.
 
 ## Adapt and check
@@ -111,12 +148,16 @@ run the selftests, inspect a local export, and try a small task. Adapt discovery
 Python tooling stays in this directory; its checks are each script's `--selftest`.
 
 ```sh
-python contrib/web-pro-kit/scripts/kit_config.py --selftest
-python contrib/web-pro-kit/scripts/secret_patterns.py --selftest
-python contrib/web-pro-kit/scripts/code_index.py --selftest
-python contrib/web-pro-kit/scripts/drive_mirror.py --selftest
-python contrib/web-pro-kit/scripts/drive_request.py --selftest
-python contrib/web-pro-kit/scripts/drive_wait.py --selftest
-python contrib/web-pro-kit/request-channel/channel.py --selftest
+python3 contrib/web-pro-kit/scripts/kit_config.py --selftest
+python3 contrib/web-pro-kit/scripts/secret_patterns.py --selftest
+python3 contrib/web-pro-kit/scripts/safe_files.py --selftest
+python3 contrib/web-pro-kit/scripts/redaction.py --selftest
+python3 contrib/web-pro-kit/scripts/code_index.py --selftest
+python3 contrib/web-pro-kit/scripts/mirror_build.py --selftest
+python3 contrib/web-pro-kit/scripts/mirror_manifest.py --selftest
+python3 contrib/web-pro-kit/scripts/drive_mirror.py --selftest
+python3 contrib/web-pro-kit/scripts/drive_request.py --selftest
+python3 contrib/web-pro-kit/scripts/drive_wait.py --selftest
+python3 contrib/web-pro-kit/request-channel/channel.py --selftest
 bunx --no-install oxfmt --check contrib/web-pro-kit
 ```
