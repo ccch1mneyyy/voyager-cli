@@ -58,10 +58,17 @@ def replace_file(source: Path, target: Path) -> None:
             time.sleep(REPLACE_DELAY)
 
 
+def _umask() -> int:
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
 def _publish(target: Path, prefix: str, fill, expected: str) -> None:
     target = Path(target)
     fd, pending = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=target.parent)
     try:
+        os.chmod(pending, 0o666 & ~_umask())  # mkstemp makes 0600; published files keep normal permissions.
         with os.fdopen(fd, "wb") as handle:
             fill(handle)
             handle.flush()
@@ -146,6 +153,8 @@ def selftest() -> int:
             source.write_bytes(b"\0archive" * 1000)
             copy_atomic(source, root / "copy.bin")
             check((root / "copy.bin").read_bytes() == source.read_bytes())
+            if os.name == "posix":
+                check((root / "copy.bin").stat().st_mode & 0o777 == 0o666 & ~_umask())
     finally:
         REPLACE_DELAY = saved_delay
     print(f"selftest PASS: {checks} checks")
