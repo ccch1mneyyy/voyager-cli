@@ -26,7 +26,7 @@ Voyager CLI 是 [Voyager](https://github.com/voyager-crew/voyager) 浏览器插�
    npm install -g @voyager-crew/cli
    ```
 
-2. 安装 Voyager 插件，需要 2.1.0 或更高版本：
+2. 安装 Voyager 插件，需要 2.1.0 或更高版本（`--approve-apps` 和保存回复里的文件需要 2.2.0）：
    [Chrome](https://chromewebstore.google.com/detail/iifacdnjakkhjjiengaffnegbndgingi) ·
    [Edge](https://microsoftedge.microsoft.com/addons/detail/voyager/gibmkggjijalcjinbdhcpklodjkhhlne) ·
    [Firefox](https://addons.mozilla.org/firefox/addon/gemini-voyager/)。打开插件弹窗，进入
@@ -97,7 +97,7 @@ voyager ask --repo owner/name "CI 为什么挂了？"       # 让 ChatGPT 的 Gi
 [github.com/settings/installations](https://github.com/settings/installations) 把仓库加上就行。
 
 做某些操作之前（比如往 Drive 写文件），ChatGPT 会在回答里停下，弹一张卡问「允许 ChatGPT 使用 Google Drive 吗？」。
-这时 voyager 以退出码 3 停下，并给出对话链接，你去那里点。加 `--approve-apps always` 就由插件替你点「始终允许」，
+这时 voyager 以退出码 3 停下，并给出对话链接，你去那里点。插件 2.2.0 及以上，加 `--approve-apps always` 就由插件替你点「始终允许」，
 `--approve-apps once` 点「允许一次」。点过「始终允许」，这张卡之后也可能再出现。
 
 ## 给 agent 用

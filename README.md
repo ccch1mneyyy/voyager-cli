@@ -29,7 +29,8 @@ and ChatGPT sees an ordinary chat from your own browser.
    npm install -g @voyager-crew/cli
    ```
 
-2. Install the Voyager extension, version 2.1.0 or later:
+2. Install the Voyager extension, version 2.1.0 or later (2.2.0 for `--approve-apps` and for saving the
+   files a reply offers):
    [Chrome](https://chromewebstore.google.com/detail/iifacdnjakkhjjiengaffnegbndgingi) ·
    [Edge](https://microsoftedge.microsoft.com/addons/detail/voyager/gibmkggjijalcjinbdhcpklodjkhhlne) ·
    [Firefox](https://addons.mozilla.org/firefox/addon/gemini-voyager/). In its popup, open
@@ -110,7 +111,7 @@ repository, voyager stops with exit code 3; add the repository at
 
 Before some app actions, such as writing a file to Drive, ChatGPT stops the reply on a card that asks
 "Allow ChatGPT to use Google Drive?". voyager then stops with exit code 3 and the conversation link, where
-you answer it. Pass `--approve-apps always` to have the extension click "Always allow" for you, or
+you answer it. With Voyager 2.2.0 or later, pass `--approve-apps always` to have the extension click "Always allow" for you, or
 `--approve-apps once` for "Allow once". The card can come back after "Always allow".
 
 ## Using it from an agent
