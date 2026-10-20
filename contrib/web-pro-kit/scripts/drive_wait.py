@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Wait for a synced DONE.txt or quiet new outputs.
 
-Exit 0 reports the marker; exit 2 asks for a delivery review after quiet output.
-The quiet timer tracks outputs written after startup and ignores control files.
+Exit 0 reports a marker with content; exit 2 asks for a delivery review after quiet output.
+The quiet timer tracks outputs written after startup and ignores control, system and sync temp files.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import math
 import os
 from pathlib import Path
@@ -18,6 +20,15 @@ import unittest
 
 
 CONTROL_FILES = {"REQUEST.md", "test.txt"}
+# Finder, Explorer, Office and Drive write these on their own; they are not deliveries.
+SYSTEM_NAMES = {".ds_store", "desktop.ini", "thumbs.db"}
+SYSTEM_PREFIXES = ("._", "~$", ".~lock.", ".request-", ".tmp.drive")
+SYSTEM_SUFFIXES = (".tmp",)
+
+
+def _ignored(name: str) -> bool:
+    low = name.lower()
+    return name in CONTROL_FILES or low in SYSTEM_NAMES or low.startswith(SYSTEM_PREFIXES) or low.endswith(SYSTEM_SUFFIXES)
 
 
 def _snapshot(directory: Path) -> dict[str, tuple[int, int]]:
@@ -29,10 +40,11 @@ def _snapshot(directory: Path) -> dict[str, tuple[int, int]]:
 
     if not directory.exists():
         return files
-    for root, _dirs, names in os.walk(directory, onerror=on_error):
+    for root, dirs, names in os.walk(directory, onerror=on_error):
+        dirs[:] = [name for name in dirs if not _ignored(name)]
         for name in names:
             path = Path(root, name)
-            if name in CONTROL_FILES:
+            if _ignored(name):
                 continue
             try:
                 stat = path.stat()
@@ -47,6 +59,14 @@ def _listing(directory: Path) -> None:
         print(f"  {size:10d}  {name}", flush=True)
 
 
+def _marker_text(path: Path) -> str:
+    """The marker's text, or '' while it is empty or still syncing (online-only files can refuse reads)."""
+    try:
+        return path.read_bytes().decode("utf-8-sig", errors="replace").strip()
+    except OSError:
+        return ""
+
+
 def wait(path: Path, every: float, quiet_min: float = 10.0, settle: float = 2.0) -> int:
     started = time.monotonic()
     directory = path.parent
@@ -57,10 +77,17 @@ def wait(path: Path, every: float, quiet_min: float = 10.0, settle: float = 2.0)
         f"quiet fallback {quiet_min:g} minutes (0 disables it).",
         flush=True,
     )
-    while not path.is_file():
-        time.sleep(every)
+    noted = False
+    while True:
         if path.is_file():
-            break
+            time.sleep(settle)
+            body = _marker_text(path)
+            if body:
+                break
+            if not noted:
+                print(f"[drive_wait] {path.name} is empty or unreadable so far; waiting for its content.", flush=True)
+                noted = True
+        time.sleep(every)
         if not quiet_min:
             continue
         try:
@@ -82,8 +109,6 @@ def wait(path: Path, every: float, quiet_min: float = 10.0, settle: float = 2.0)
             )
             _listing(directory)
             return 2
-    time.sleep(settle)
-    body = path.read_text(encoding="utf-8-sig").strip()
     print(f"[drive_wait] Marker arrived after {(time.monotonic() - started) / 60:.1f} minutes.")
     print(f"---- {path.name} ----\n{body}\n------------------", flush=True)
     _listing(directory)
@@ -140,6 +165,25 @@ def selftest() -> int:
         def test_control_files_do_not_complete(self):
             self.later(0.01, lambda: (self.root / "test.txt").write_bytes(b""))
             self.later(0.02, lambda: (self.root / "REQUEST.md").write_text("Version: 1\n"))
+            self.later(0.15, self.done)
+            self.assertEqual(wait(self.marker, 0.01, 0.001, settle=0), 0)
+
+        def test_empty_marker_waits_for_content(self):
+            self.marker.write_bytes(b"")
+            self.later(0.05, self.done)
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                self.assertEqual(wait(self.marker, 0.01, 0, settle=0), 0)
+            self.assertIn("finished 1 / unfinished 0", printed.getvalue())
+
+        def test_system_and_temp_files_do_not_complete(self):
+            def litter():
+                for name in (".DS_Store", "._result.zip", "desktop.ini", "Thumbs.db", "~$NOTES.docx",
+                             ".request-x1.tmp", "upload.tmp"):
+                    (self.root / name).write_bytes(b"x")
+                (self.root / ".tmp.drivedownload").mkdir()
+                (self.root / ".tmp.drivedownload" / "part").write_bytes(b"x")
+            self.later(0.01, litter)
             self.later(0.15, self.done)
             self.assertEqual(wait(self.marker, 0.01, 0.001, settle=0), 0)
 
