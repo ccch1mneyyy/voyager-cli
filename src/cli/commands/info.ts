@@ -38,11 +38,17 @@ export async function statusCommand(paths: StatePaths, argv: readonly string[]):
         : `, seen ${Math.max(0, Math.round((Date.now() - seenAt) / 60_000))} min ago`;
     printLine(`${describeAccount(ext.account)}${ext.account ? age : ''}`);
   }
-  printLine(
-    status.activeJob === undefined
-      ? 'active job: none'
-      : `active job: ${status.activeJob.jobId}${status.activeJob.op ? ` (${status.activeJob.op})` : ''}`,
-  );
+  const active = status.activeJobs ?? (status.activeJob === undefined ? [] : [status.activeJob]);
+  const named = active.map((job) => `${job.jobId}${job.op ? ` (${job.op})` : ''}`);
+  const label = named.length > 1 ? 'active jobs' : 'active job';
+  printLine(`${label}: ${named.length === 0 ? 'none' : named.join(', ')}`);
+  if (status.maxJobs !== undefined) {
+    printLine(
+      status.maxJobs > 1
+        ? `parallel jobs: up to ${status.maxJobs} at once`
+        : 'parallel jobs: off (one job at a time; turn it on in the Voyager popup)',
+    );
+  }
   return 0;
 }
 

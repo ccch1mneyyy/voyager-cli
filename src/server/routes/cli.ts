@@ -9,7 +9,9 @@ import {
   type StatusResponse,
 } from '@voyager-crew/bridge-protocol';
 
+import { jobCapacity } from '../../jobs/admission';
 import { CALL_PLUGIN } from '../../plugins/callPlugin';
+import { loadConfig } from '../../state/config';
 import { failure } from '../../util/errors';
 import { CLI_VERSION } from '../../version';
 import type { Route, ServerCore } from '../http';
@@ -19,6 +21,13 @@ const MAX_EVENTS_WAIT_S = 25;
 
 export function cliRoutes(core: ServerCore): Route[] {
   const { pairing, extension, runner, store, registry } = core;
+
+  /** `maxParallelJobs`; a config.json that cannot be read limits nothing, and is logged. */
+  const limits = (): Promise<{ maxParallelJobs?: number }> =>
+    loadConfig(core.paths).catch((error: unknown) => {
+      core.log.warn('config.json could not be read', { error: String(error) });
+      return {};
+    });
 
   const requireJob = async (jobId: string) => {
     const job = await store.get(jobId);
@@ -31,9 +40,11 @@ export function cliRoutes(core: ServerCore): Route[] {
       method: 'GET',
       pattern: /^\/v1\/status$/,
       access: 'cli',
-      handle: () => {
+      handle: async () => {
         const current = pairing.current;
-        const activeJob = runner.activeJob();
+        const { maxParallelJobs } = await limits();
+        const activeJobs = runner.activeJobs();
+        const activeJob = activeJobs[0];
         const data: StatusResponse = {
           extension: {
             paired: current !== null,
@@ -43,7 +54,8 @@ export function cliRoutes(core: ServerCore): Route[] {
             policy: extension.policy,
             account: extension.account,
           },
-          ...(activeJob === undefined ? {} : { activeJob }),
+          ...(activeJob === undefined ? {} : { activeJob, activeJobs }),
+          maxJobs: jobCapacity(extension.maxTasks, maxParallelJobs),
           serverVersion: CLI_VERSION,
         };
         return { status: 200, data };
@@ -94,13 +106,20 @@ export function cliRoutes(core: ServerCore): Route[] {
       method: 'POST',
       pattern: /^\/v1\/jobs$/,
       access: 'cli',
-      handle: ({ body }) => {
+      handle: async ({ body }) => {
         const checked = validateMessage('jobSubmitRequest', body);
         if (!checked.ok) throw failure('bad-request', 'invalid job', { issues: checked.issues });
         const { plugin, command, input } = checked.value;
         if (plugin === CALL_PLUGIN)
           throw failure('bad-request', `use ${BRIDGE_PATHS.call} for single ops`);
-        const job = runner.submit(plugin, command, input);
+        // Read before the synchronous submit, so two submits still meet its busy check in turn.
+        const { maxParallelJobs } = await limits();
+        const job = runner.submit(
+          plugin,
+          command,
+          input,
+          maxParallelJobs === undefined ? {} : { maxParallelJobs },
+        );
         const data: JobSubmitResponse = { jobId: job.jobId };
         return { status: 202, data };
       },

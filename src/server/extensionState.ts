@@ -39,6 +39,8 @@ export class ExtensionState {
   policy: PolicyReport | null = null;
   /** The ChatGPT plan the extension's pages last showed; null until it reports one. */
   account: AccountPlan | null = null;
+  /** Jobs the extension runs at once (more than one once parallel jobs are allowed); null until it polls. */
+  maxTasks: number | null = null;
 
   opNames(): ReadonlySet<OpName> | null {
     return this.ops === null ? null : new Set(this.ops.map((op) => op.name));
@@ -49,5 +51,6 @@ export class ExtensionState {
     this.ops = null;
     this.policy = null;
     this.account = null;
+    this.maxTasks = null;
   }
 }

@@ -111,8 +111,13 @@ npx skills add voyager-crew/voyager-cli
 [`skills/voyager/SKILL.md`](skills/voyager/SKILL.md) 就是写给它们看的：JSON 输出、每个退出码的含义、怎么等长任务而不把问题发两遍，以及接着问时用
 `--chat` 加上次拿到的对话 id，而不是 `--continue`。
 
-同一时间只跑一个任务。每次的结果里还会带上你的 ChatGPT 套餐（`Pro Lite ($100)`、`Pro ($200)`
-等），以页面最近一次报告的为准。
+默认同一时间只跑一个任务。在 Voyager 弹窗的 **本地桥接** 卡片里打开 **并行运行任务**（2.2.0 之后的
+Voyager 版本）后，最多 10 个任务同时进行，各用自己的 ChatGPT 标签页：几个 agent 可以同时提问，回复一起等；
+输入和点击仍会轮流进行。往同一个对话里的两次提问、两次项目改动不会同时进行，后来的那个按 busy 拒绝（退出码 5）。
+想少跑几个，在 `~/.voyager/config.json` 里写 `"maxParallelJobs": 2`；每个在跑的任务都是一次单独的 Pro 请求。
+`voyager status` 会显示现在最多能同时跑几个。
+
+每次的结果里还会带上你的 ChatGPT 套餐（`Pro Lite ($100)`、`Pro ($200)` 等），以页面最近一次报告的为准。
 
 ## 须知
 
