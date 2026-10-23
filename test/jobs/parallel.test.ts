@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { JobDetail } from '../../src/jobs/jobStore';
 import { takesPageTurn } from '../../src/jobs/pageTurns';
+import type { BridgeServerOptions } from '../../src/server/http';
+import { loadConfig } from '../../src/state/config';
 import { withSerialUpdates } from '../../src/state/pluginState';
 import { ASK_HANDLERS, FakeExtension, pairFake, type OpHandler } from '../helpers/fakeExtension';
 import { data, errorCode, startTestServer, until, type TestServer } from '../helpers/server';
@@ -52,8 +54,8 @@ function handlers() {
 }
 
 /** A paired extension that runs `maxTasks` tasks at once and has polled once. */
-async function setup(maxTasks: number | undefined) {
-  t = await startTestServer();
+async function setup(maxTasks: number | undefined, overrides: Partial<BridgeServerOptions> = {}) {
+  t = await startTestServer(overrides);
   const replies = handlers();
   fake = new FakeExtension(t.port, replies.handlers);
   fake.maxTasks = maxTasks;
@@ -169,6 +171,21 @@ describe('parallel jobs', () => {
     expect(details(second)).toMatchObject({ maxJobs: 1 });
   });
 
+  it('runs one job at a time, and says so once, when maxParallelJobs is not usable', async () => {
+    const warnings: unknown[] = [];
+    const log = { info() {}, error() {}, warn: (message: string) => void warnings.push(message) };
+    const { t, fake } = await setup(4, { log });
+    await writeFile(t.paths.config, JSON.stringify({ maxParallelJobs: 0 }));
+    expect((await submitAsk(t)).status).toBe(202);
+    await waitingReplies(fake, 1);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const next = await submitAsk(t);
+      expect(errorCode(next)).toBe('busy');
+      expect(details(next)).toMatchObject({ maxJobs: 1 });
+    }
+    expect(warnings.filter((m) => String(m).includes('maxParallelJobs'))).toHaveLength(1);
+  });
+
   it('refuses an ask --chat into the conversation a new ask beside it has just sent to', async () => {
     const { t, fake } = await setup(2);
     const first = data<JobSubmitResponse>(await submitAsk(t)).jobId;
@@ -243,5 +260,26 @@ describe('plugin state of jobs side by side', () => {
     );
     await working.update((current) => `${String(current)}+1`);
     expect(stored).toBe('kept+1');
+  });
+});
+
+describe('maxParallelJobs in config.json', () => {
+  it.each([0, -2, 1.5, '3', null])('counts %j as one job at a time', async (value) => {
+    t = await startTestServer();
+    await writeFile(t.paths.config, JSON.stringify({ maxParallelJobs: value }));
+    expect(await loadConfig(t.paths)).toMatchObject({
+      maxParallelJobs: 1,
+      invalidMaxParallelJobs: JSON.stringify(value),
+    });
+  });
+
+  it('keeps a whole number of 1 or more, and leaves an unset limit to the extension', async () => {
+    t = await startTestServer();
+    await writeFile(t.paths.config, JSON.stringify({ maxParallelJobs: 3 }));
+    const set = await loadConfig(t.paths);
+    expect(set.maxParallelJobs).toBe(3);
+    expect(set.invalidMaxParallelJobs).toBeUndefined();
+    await writeFile(t.paths.config, JSON.stringify({ port: 47_321 }));
+    expect((await loadConfig(t.paths)).maxParallelJobs).toBeUndefined();
   });
 });

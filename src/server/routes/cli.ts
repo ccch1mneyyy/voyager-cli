@@ -22,12 +22,24 @@ const MAX_EVENTS_WAIT_S = 25;
 export function cliRoutes(core: ServerCore): Route[] {
   const { pairing, extension, runner, store, registry } = core;
 
+  /** The last unusable `maxParallelJobs` logged, so each mistake is logged once. */
+  let warnedLimit: string | undefined;
   /** `maxParallelJobs`; a config.json that cannot be read limits nothing, and is logged. */
-  const limits = (): Promise<{ maxParallelJobs?: number }> =>
-    loadConfig(core.paths).catch((error: unknown) => {
+  const limits = async (): Promise<{ maxParallelJobs?: number }> => {
+    const config = await loadConfig(core.paths).catch((error: unknown) => {
       core.log.warn('config.json could not be read', { error: String(error) });
-      return {};
+      return { maxParallelJobs: undefined, invalidMaxParallelJobs: undefined };
     });
+    const invalid = config.invalidMaxParallelJobs;
+    if (invalid !== undefined && invalid !== warnedLimit) {
+      core.log.warn(
+        'maxParallelJobs in config.json is not a whole number of 1 or more; running one job at a time',
+        { maxParallelJobs: invalid },
+      );
+    }
+    warnedLimit = invalid;
+    return config.maxParallelJobs === undefined ? {} : { maxParallelJobs: config.maxParallelJobs };
+  };
 
   const requireJob = async (jobId: string) => {
     const job = await store.get(jobId);
