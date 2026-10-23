@@ -14,7 +14,12 @@ import {
  */
 import { join } from 'node:path';
 
-import type { CommandDef, JobContext, PluginState } from '../plugins/api';
+import {
+  type CommandDef,
+  conversationConflictKey,
+  type JobContext,
+  type PluginState,
+} from '../plugins/api';
 import { CALL_PLUGIN } from '../plugins/callPlugin';
 import type { PluginRegistry } from '../plugins/registry';
 import { type ExtensionState, policyFailure } from '../server/extensionState';
@@ -53,7 +58,8 @@ interface Active {
   readonly controller: AbortController;
   readonly done: Promise<void>;
   readonly alone: boolean;
-  readonly conflictKey: string | undefined;
+  /** What it works on: its command's key from the start, its conversation once that is known. */
+  readonly conflictKeys: Set<string>;
 }
 
 /** A running job as `voyager status` shows it. */
@@ -87,7 +93,7 @@ export class JobRunner {
     const running = [...this.active.values()].map((entry) => ({
       jobId: entry.job.jobId,
       alone: entry.alone,
-      conflictKey: entry.conflictKey,
+      conflictKeys: [...entry.conflictKeys],
     }));
     const alone = plugin === CALL_PLUGIN;
     const conflictKey = conflictKeyOf(def, input);
@@ -115,8 +121,9 @@ export class JobRunner {
     const job = this.deps.store.create(plugin, command, input);
     const controller = new AbortController();
     this.deps.store.appendEvent(job.jobId, 'status', { status: 'running' });
+    const conflictKeys = new Set(conflictKey === undefined ? [] : [conflictKey]);
     const done = this.execute(job, def, controller);
-    this.active.set(job.jobId, { job, controller, done, alone, conflictKey });
+    this.active.set(job.jobId, { job, controller, done, alone, conflictKeys });
     return job;
   }
 
@@ -235,6 +242,12 @@ export class JobRunner {
       },
       progress: (event) => store.appendEvent(job.jobId, 'progress', event),
       checkpoint: async (name, data) => {
+        // Known now, so held from now: an `ask --chat <this id>` beside it would type into it too.
+        if (typeof data.conversationId === 'string') {
+          this.active
+            .get(job.jobId)
+            ?.conflictKeys.add(conversationConflictKey(data.conversationId));
+        }
         job.checkpoints[name] = data;
         store.update(job, {});
         store.appendEvent(job.jobId, 'checkpoint', { name, data });

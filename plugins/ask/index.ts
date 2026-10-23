@@ -25,6 +25,7 @@ import type {
 import { basename } from 'node:path';
 
 import {
+  conversationConflictKey,
   definePlugin,
   type ForegroundContext,
   type JobContext,
@@ -439,7 +440,9 @@ export const askPlugin = definePlugin({
       prepare,
       // Two asks into one conversation would type into it from two tabs at once.
       conflictKey: (input: AskInput) =>
-        input.conversationId === undefined ? undefined : `conversation ${input.conversationId}`,
+        input.conversationId === undefined
+          ? undefined
+          : conversationConflictKey(input.conversationId),
       run,
       present: presentResponse,
     },

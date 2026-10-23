@@ -169,6 +169,18 @@ describe('parallel jobs', () => {
     expect(details(second)).toMatchObject({ maxJobs: 1 });
   });
 
+  it('refuses an ask --chat into the conversation a new ask beside it has just sent to', async () => {
+    const { t, fake } = await setup(2);
+    const first = data<JobSubmitResponse>(await submitAsk(t)).jobId;
+    await waitingReplies(fake, 1);
+    const job = data<JobDetail>(await t.cli('GET', bridgePath.job(first)));
+    const conversationId = job.checkpoints.sent?.conversationId;
+    expect(conversationId).toBe('c-1');
+    const same = await submitAsk(t, { conversationId });
+    expect(errorCode(same)).toBe('busy');
+    expect(details(same)).toMatchObject({ activeJobId: first, conflict: 'conversation c-1' });
+  });
+
   it('refuses a second ask into a conversation another job is asking in', async () => {
     const { t, fake } = await setup(2);
     const first = data<JobSubmitResponse>(await submitAsk(t, { conversationId: 'c-9' })).jobId;

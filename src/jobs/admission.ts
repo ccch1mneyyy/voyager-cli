@@ -12,6 +12,13 @@ export interface RunningJob {
   readonly jobId: string;
   /** A raw single op (`voyager call`): it borrows whichever tab is free, so it runs alone. */
   readonly alone: boolean;
+  /** What it works on (a conversation, the projects); another job on one of them is refused. */
+  readonly conflictKeys: readonly string[];
+}
+
+/** The job about to start: its key is only what its input names. */
+export interface NextJob {
+  readonly alone: boolean;
   readonly conflictKey: string | undefined;
 }
 
@@ -23,7 +30,7 @@ export function jobCapacity(extensionMaxTasks: number | null, configured?: numbe
 
 export function admissionFailure(
   running: readonly RunningJob[],
-  next: Omit<RunningJob, 'jobId'>,
+  next: NextJob,
   capacity: number,
 ): BridgeFailure | undefined {
   const first = running[0];
@@ -48,9 +55,9 @@ export function admissionFailure(
       details,
     );
   }
-  const clash = running.find(
-    (job) => next.conflictKey !== undefined && job.conflictKey === next.conflictKey,
-  );
+  const key = next.conflictKey;
+  const clash =
+    key === undefined ? undefined : running.find((job) => job.conflictKeys.includes(key));
   if (clash !== undefined) {
     return failure(
       'busy',

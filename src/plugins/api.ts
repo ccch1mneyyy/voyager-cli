@@ -159,6 +159,14 @@ export interface VoyagerPlugin {
   readonly commands: Readonly<Record<string, CommandDef<any>>>;
 }
 
+/**
+ * The conflict key of a conversation. A job holds it from submit when its input names the
+ * conversation, and from its first checkpoint with a `conversationId` otherwise.
+ */
+export function conversationConflictKey(conversationId: string): string {
+  return `conversation ${conversationId}`;
+}
+
 export function definePlugin<P extends VoyagerPlugin>(plugin: P): P {
   return plugin;
 }
