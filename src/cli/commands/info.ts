@@ -43,8 +43,8 @@ export async function statusCommand(paths: StatePaths, argv: readonly string[]):
   return 0;
 }
 
-/** The active jobs, and how many may run at once. */
-export function statusJobLines(status: ServeStatus): string[] {
+/** The active jobs and, while the extension is around, how many may run at once. */
+export function statusJobLines(status: ServeStatus, now = Date.now()): string[] {
   const active: readonly ActiveJobView[] =
     status.activeJobs ?? (status.activeJob === undefined ? [] : [status.activeJob]);
   // Turns matter only between jobs: a job alone always has the page.
@@ -62,14 +62,29 @@ export function statusJobLines(status: ServeStatus): string[] {
   });
   const label = named.length > 1 ? 'active jobs' : 'active job';
   const lines = [`${label}: ${named.length === 0 ? 'none' : named.join(', ')}`];
-  if (status.maxJobs !== undefined) {
-    lines.push(
-      status.maxJobs > 1
-        ? `parallel jobs: up to ${status.maxJobs} at once`
-        : 'parallel jobs: off (one job at a time; turn it on in the Voyager popup)',
-    );
-  }
+  const parallel = parallelLine(status, now);
+  if (parallel !== undefined) lines.push(parallel);
   return lines;
+}
+
+/** Nothing while the extension is unpaired or away: its popup switch is unknown then. */
+function parallelLine(status: ServeStatus, now: number): string | undefined {
+  const ext = status.extension;
+  const last = ext.lastPollAt;
+  if (!ext.paired || last === null || now - last > EXTENSION_OFFLINE_MS) return undefined;
+  const offered = ext.maxTasks;
+  const maxJobs = status.maxJobs ?? 1;
+  if (offered === undefined) {
+    // A serve from before it reported the extension's own number.
+    return maxJobs > 1 ? `parallel jobs: up to ${maxJobs} at once` : undefined;
+  }
+  if (offered === null) {
+    return `parallel jobs: not in Voyager ${ext.version ?? '?'} (one job at a time; a newer Voyager runs several)`;
+  }
+  if (offered <= 1)
+    return 'parallel jobs: off (one job at a time; turn it on in the Voyager popup)';
+  if (maxJobs >= offered) return `parallel jobs: up to ${maxJobs} at once`;
+  return `parallel jobs: up to ${maxJobs} at once (maxParallelJobs in config.json; the Voyager popup allows ${offered})`;
 }
 
 export async function commandsCommand(paths: StatePaths, argv: readonly string[]): Promise<number> {

@@ -69,6 +69,7 @@ export function cliRoutes(core: ServerCore): Route[] {
             browser: current?.browser ?? null,
             policy: extension.policy,
             account: extension.account,
+            maxTasks: extension.maxTasks,
           },
           ...(activeJob === undefined ? {} : { activeJob, activeJobs }),
           maxJobs: jobCapacity(extension.maxTasks, maxParallelJobs),

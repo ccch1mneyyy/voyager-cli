@@ -24,11 +24,37 @@ function status(
   };
 }
 
-describe('voyager status: page turns', () => {
+const parallel = (s: ServeStatus) => statusJobLines(s, NOW).slice(1);
+
+describe('voyager status: parallel jobs', () => {
+  it('says an older Voyager runs one job at a time, apart from a switch that is off', () => {
+    expect(parallel(status({ maxTasks: null }))).toEqual([
+      'parallel jobs: not in Voyager 2.2.1 (one job at a time; a newer Voyager runs several)',
+    ]);
+    expect(parallel(status({ maxTasks: 1 }))).toEqual([
+      'parallel jobs: off (one job at a time; turn it on in the Voyager popup)',
+    ]);
+  });
+
+  it('says how many run at once, and when config.json holds it below the popup', () => {
+    expect(parallel(status({ maxTasks: 4 }, { maxJobs: 4 }))).toEqual([
+      'parallel jobs: up to 4 at once',
+    ]);
+    expect(parallel(status({ maxTasks: 4 }, { maxJobs: 2 }))).toEqual([
+      'parallel jobs: up to 2 at once (maxParallelJobs in config.json; the Voyager popup allows 4)',
+    ]);
+  });
+
+  it('says nothing about it while the extension is unpaired or away', () => {
+    expect(parallel(status({ paired: false, maxTasks: null }))).toEqual([]);
+    expect(parallel(status({ lastPollAt: null, maxTasks: null }))).toEqual([]);
+    expect(parallel(status({ lastPollAt: NOW - 10 * 60_000, maxTasks: 4 }))).toEqual([]);
+  });
+
   it('names the job that has the page turn and the jobs waiting for it', () => {
     const lines = statusJobLines(
       status(
-        {},
+        { maxTasks: 3 },
         {
           maxJobs: 3,
           activeJobs: [
@@ -38,6 +64,7 @@ describe('voyager status: page turns', () => {
           ],
         },
       ),
+      NOW,
     );
     expect(lines[0]).toBe(
       'active jobs: j1 (composer.send, has the page turn), j2 (turns.waitReply), j3 (waiting for the page turn)',
