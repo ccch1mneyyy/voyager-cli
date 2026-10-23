@@ -96,20 +96,24 @@ export function createOpsClient(hooks: OpsClientHooks): OpsClient {
       if (!checked.ok) {
         throw failure('bad-request', `invalid params for ${op}`, { issues: checked.issues });
       }
+      const deadlineMs = options.timeoutMs ?? defaultOpTimeout(op, checked.value);
       const run = async (): Promise<OpResultMap[K]> => {
         hooks.onStart(op);
+        // While this job holds the page turn, the jobs waiting for it wait as long as this op may take.
+        turns.opStarted(jobId, op, deadlineMs);
         try {
           const result = await slot.run({
             jobId,
             op,
             params: checked.value,
-            deadlineMs: options.timeoutMs ?? defaultOpTimeout(op, checked.value),
+            deadlineMs,
             signal,
             onProgress: (event) => hooks.onProgress(op, event),
           });
           // TaskSlot validated the result with `validateOpResult(op, …)`.
           return result as OpResultMap[K];
         } finally {
+          turns.opEnded(jobId);
           hooks.onEnd(op);
         }
       };

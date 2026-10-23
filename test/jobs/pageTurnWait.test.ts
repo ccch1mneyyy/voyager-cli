@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { exitForJob, EXIT } from '../../src/cli/exitCodes';
 import type { JobDetail } from '../../src/jobs/jobStore';
 import type { PageTurnOptions } from '../../src/jobs/pageTurns';
+import { definePlugin } from '../../src/plugins/api';
+import { OFFICIAL_PLUGINS, PluginRegistry } from '../../src/plugins/registry';
 import type { ServeStatus } from '../../src/server/serveStatus';
 import { ASK_HANDLERS, FakeExtension, pairFake, type OpHandler } from '../helpers/fakeExtension';
 import { data, startTestServer, until, type TestServer } from '../helpers/server';
@@ -46,8 +48,36 @@ function holdable() {
   };
 }
 
+/** A job that takes the page turn and keeps it, doing nothing, until `letGo()`: a stuck holder. */
+function stuckPlugin() {
+  let letGo!: () => void;
+  const released = new Promise<void>((resolve) => {
+    letGo = resolve;
+  });
+  const plugin = definePlugin({
+    name: 'stuck',
+    apiVersion: 1,
+    requiresOps: [],
+    commands: {
+      hold: {
+        summary: 'hold the page turn',
+        prepare: async () => ({}),
+        run: async (ctx) => {
+          await ctx.ops.exclusive(() => released);
+          return { data: {} };
+        },
+      },
+    },
+  });
+  return { plugin, letGo };
+}
+
 async function setup(pageTurns?: PageTurnOptions) {
-  t = await startTestServer(pageTurns === undefined ? {} : { pageTurns });
+  const stuck = stuckPlugin();
+  t = await startTestServer({
+    registry: new PluginRegistry([...OFFICIAL_PLUGINS, stuck.plugin]),
+    ...(pageTurns === undefined ? {} : { pageTurns }),
+  });
   const gate = holdable();
   fake = new FakeExtension(t.port, gate.handlers);
   fake.maxTasks = 2;
@@ -58,7 +88,7 @@ async function setup(pageTurns?: PageTurnOptions) {
     const status = data<StatusResponse>(await server.cli('GET', BRIDGE_PATHS.status));
     return status.extension.lastPollAt !== null;
   });
-  return { t: server, fake, gate };
+  return { t: server, fake, gate, letGo: stuck.letGo };
 }
 
 async function submitAsk(server: TestServer): Promise<string> {
@@ -109,25 +139,40 @@ describe('waiting for a turn at the page', () => {
     expect((await finished(t, a)).status).toBe('succeeded');
   });
 
-  it('fails a job as busy (exit 5), naming the holder, when its turn does not come in time', async () => {
-    const { t, fake, gate } = await setup({ waitMs: 150 });
+  it('keeps a job waiting while the holder runs a step longer than the grace but within its deadline', async () => {
+    const { t, fake, gate } = await setup({ graceMs: 100 });
     const a = await submitAsk(t);
     gate.hold('composer.send', a);
     await started(fake, 'composer.send', a);
     const b = await submitAsk(t);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    gate.release('composer.send', a);
+    expect((await finished(t, a)).status).toBe('succeeded');
+    expect((await finished(t, b)).status).toBe('succeeded');
+  });
+
+  it('fails a job as busy (exit 5), naming the holder, when the holder overruns its time', async () => {
+    const { t, fake, letGo } = await setup({ graceMs: 150 });
+    const stuck = data<JobSubmitResponse>(
+      await t.cli('POST', BRIDGE_PATHS.jobs, { plugin: 'stuck', command: 'hold', input: {} }),
+    ).jobId;
+    const b = await submitAsk(t);
 
     const late = await finished(t, b);
     expect(late.status).toBe('failed');
-    expect(late.error).toMatchObject({ code: 'busy', details: { activeJobId: a, pageTurn: true } });
-    expect(late.error?.message).toContain(`job ${a}`);
+    expect(late.error).toMatchObject({
+      code: 'busy',
+      details: { activeJobId: stuck, pageTurn: true },
+    });
+    expect(late.error?.message).toContain(`job ${stuck}`);
     expect(exitForJob(late)).toBe(EXIT.busy);
     expect(opsOf(fake, b)).toEqual([]);
-    gate.release('composer.send', a);
-    expect((await finished(t, a)).status).toBe('succeeded');
+    letGo();
+    expect((await finished(t, stuck)).status).toBe('succeeded');
   });
 
   it('ends a job whose tab close cannot get a turn, leaving the tab, with its own outcome', async () => {
-    const { t, fake, gate } = await setup({ waitMs: 10_000, cleanupWaitMs: 150 });
+    const { t, fake, gate } = await setup({ graceMs: 10_000, cleanupWaitMs: 150 });
     const b = await submitAsk(t);
     gate.hold('turns.waitReply', b);
     await started(fake, 'turns.waitReply', b);

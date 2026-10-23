@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PageTurns } from '../../src/jobs/pageTurns';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('page turns', () => {
   it('gives the page to one job at a time, in the order they asked', async () => {
@@ -78,26 +79,63 @@ describe('page turns', () => {
     expect(turns.current()).toBeUndefined();
   });
 
-  it('fails a job as busy, naming the holder, once it has waited too long', async () => {
-    const turns = new PageTurns({ waitMs: 30 });
+  it('keeps waiting while the holder runs a long step within its own deadline', async () => {
+    const turns = new PageTurns({ graceMs: 30 });
     const held = await turns.take('j1');
+    turns.opStarted('j1', 'composer.attach', 200);
+    let settled = false;
+    const waiting = turns.take('j2').finally(() => {
+      settled = true;
+    });
+    await pause(120);
+    expect(settled).toBe(false);
+    turns.opEnded('j1');
+    held();
+    (await waiting)();
+    expect(turns.current()).toBeUndefined();
+  });
+
+  it('fails every waiting job as busy, naming the holder, once its step overruns deadline and grace', async () => {
+    const turns = new PageTurns({ graceMs: 30 });
+    const held = await turns.take('j1');
+    turns.opStarted('j1', 'composer.send', 40);
+    const started = Date.now();
     const [late, next] = await Promise.allSettled([turns.take('j2'), turns.take('j3')]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(60);
     expect(late).toMatchObject({
       status: 'rejected',
       reason: {
         code: 'busy',
         message: expect.stringContaining('job j1'),
-        error: { details: { activeJobId: 'j1', pageTurn: true } },
+        error: { details: { activeJobId: 'j1', pageTurn: true, holderOp: 'composer.send' } },
       },
     });
     expect(next).toMatchObject({ status: 'rejected', reason: { code: 'busy' } });
     expect(turns.waiting()).toEqual([]);
+    // Behind a holder already overdue, a new job fails at once.
+    await expect(turns.take('j4')).rejects.toMatchObject({ code: 'busy' });
     held();
     expect(turns.current()).toBeUndefined();
   });
 
+  it('gives a holder only the grace between its steps, and every new holder its own', async () => {
+    const turns = new PageTurns({ graceMs: 40 });
+    const held = await turns.take('j1');
+    const second = turns.take('j2');
+    await pause(20);
+    held();
+    const giveBack = await second;
+    // j2 starts afresh: j3 waits for it, not for what is left of j1's time.
+    const third = turns.take('j3');
+    await expect(third).rejects.toMatchObject({
+      code: 'busy',
+      message: expect.stringContaining('job j2'),
+    });
+    giveBack();
+  });
+
   it('gives a cleanup step its own, shorter wait', async () => {
-    const turns = new PageTurns({ waitMs: 5_000, cleanupWaitMs: 20 });
+    const turns = new PageTurns({ graceMs: 5_000, cleanupWaitMs: 20 });
     const held = await turns.take('j1');
     const step = turns.take('j2');
     await expect(turns.take('j3', { cleanup: true })).rejects.toMatchObject({ code: 'busy' });
