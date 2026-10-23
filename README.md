@@ -130,8 +130,9 @@ up with `--chat` and the conversation id it got rather than `--continue`.
 One job runs at a time, unless you turn on **Run jobs in parallel** in the **Local bridge** card of
 the Voyager popup (a Voyager release later than 2.2.1) and choose there how many run at once, from
 2 to 10. Then that many jobs run side by side, each in its own ChatGPT tab, so several agents can
-ask at once and their replies are awaited together; typing and clicking still take turns, and a
-job that waits more than 5 minutes for its turn stops as busy (exit 5) before that step. Two asks
+ask at once and their replies are awaited together; typing and clicking still take turns. A job
+waits for its turn as long as the other job's step may take (a large upload, up to 10 minutes),
+and stops as busy (exit 5) before its own step only when that job is stuck past it. Two asks
 into the same conversation, or two project changes, never run together: the later one is refused
 as busy (exit 5). `"maxParallelJobs": 2` in `~/.voyager/config.json` keeps it to fewer jobs; each
 running job is a Pro request of its own. `voyager status` says how many jobs may run now and which
