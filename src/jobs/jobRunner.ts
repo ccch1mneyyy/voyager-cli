@@ -27,7 +27,7 @@ import type { BlobStore } from './blobStore';
 import type { IncomingBlobStore } from './incomingBlobStore';
 import { isTerminal, type JobRecord, type JobStore } from './jobStore';
 import { createOpsClient } from './opsClient';
-import { PageTurns } from './pageTurns';
+import { type PageTurnOptions, PageTurns } from './pageTurns';
 import type { TaskSlot } from './taskSlot';
 
 export interface JobRunnerDeps {
@@ -44,6 +44,8 @@ export interface JobRunnerDeps {
   readonly rememberConversation?: (entry: LastConversation) => Promise<void>;
   /** Each plugin's own state; kept in memory for the runner's life when not given. */
   readonly pluginState?: (plugin: string) => StoredPluginState;
+  /** How long a job waits for its turn at the page; the defaults outside tests. */
+  readonly pageTurns?: PageTurnOptions;
 }
 
 interface Active {
@@ -52,6 +54,14 @@ interface Active {
   readonly done: Promise<void>;
   readonly alone: boolean;
   readonly conflictKey: string | undefined;
+}
+
+/** A running job as `voyager status` shows it. */
+export interface ActiveJobView {
+  readonly jobId: string;
+  readonly op?: OpName;
+  /** `holding`: it acts on its page now; `waiting`: for another job to let go first. */
+  readonly pageTurn?: 'holding' | 'waiting';
 }
 
 export interface SubmitOptions {
@@ -63,11 +73,13 @@ export class JobRunner {
   /** By job id, oldest first. */
   private readonly active = new Map<string, Active>();
   private readonly memoryState = new Map<string, unknown>();
-  private readonly turns = new PageTurns();
+  private readonly turns: PageTurns;
   /** Per plugin, its newest state update: updates of jobs side by side run one after another. */
   private readonly stateUpdates = new Map<string, { current: Promise<unknown> }>();
 
-  constructor(private readonly deps: JobRunnerDeps) {}
+  constructor(private readonly deps: JobRunnerDeps) {
+    this.turns = new PageTurns(deps.pageTurns);
+  }
 
   /** Synchronous up to the busy check, so concurrent submits cannot both pass it. */
   submit(plugin: string, command: string, input: unknown, options: SubmitOptions = {}): JobRecord {
@@ -108,11 +120,18 @@ export class JobRunner {
     return job;
   }
 
-  /** Every running job, oldest first, with the op it runs now. */
-  activeJobs(): { jobId: string; op?: OpName }[] {
+  /** Every running job, oldest first, with the op it runs now and where it stands for the page turn. */
+  activeJobs(): ActiveJobView[] {
+    const holder = this.turns.current();
+    const waiting = new Set(this.turns.waiting());
     return [...this.active.keys()].map((jobId) => {
       const op = this.deps.slot.taskOf(jobId)?.op;
-      return op === undefined ? { jobId } : { jobId, op };
+      const pageTurn = holder === jobId ? 'holding' : waiting.has(jobId) ? 'waiting' : undefined;
+      return {
+        jobId,
+        ...(op === undefined ? {} : { op }),
+        ...(pageTurn === undefined ? {} : { pageTurn }),
+      };
     });
   }
 

@@ -6,7 +6,6 @@ import {
   type CommandsResponse,
   type JobEventsResponse,
   type JobSubmitResponse,
-  type StatusResponse,
 } from '@voyager-crew/bridge-protocol';
 
 import { jobCapacity } from '../../jobs/admission';
@@ -15,6 +14,7 @@ import { loadConfig } from '../../state/config';
 import { failure } from '../../util/errors';
 import { CLI_VERSION } from '../../version';
 import type { Route, ServerCore } from '../http';
+import type { ServeStatus } from '../serveStatus';
 
 const JOB = '([A-Za-z0-9_-]{1,128})';
 const MAX_EVENTS_WAIT_S = 25;
@@ -44,8 +44,12 @@ export function cliRoutes(core: ServerCore): Route[] {
         const current = pairing.current;
         const { maxParallelJobs } = await limits();
         const activeJobs = runner.activeJobs();
-        const activeJob = activeJobs[0];
-        const data: StatusResponse = {
+        const first = activeJobs[0];
+        const activeJob =
+          first === undefined
+            ? undefined
+            : { jobId: first.jobId, ...(first.op === undefined ? {} : { op: first.op }) };
+        const data: ServeStatus = {
           extension: {
             paired: current !== null,
             lastPollAt: extension.lastPollAt,

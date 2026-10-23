@@ -67,8 +67,8 @@ export function createOpsClient(hooks: OpsClientHooks): OpsClient {
    * Hold the page turn around `work`. It is given back only once the job's slot is empty:
    * a task given up early (cancel, deadline) may still be acting on the page.
    */
-  const inTurn = async <T>(work: () => Promise<T>): Promise<T> => {
-    const giveBack = await turns.take(jobId, signal);
+  const inTurn = async <T>(work: () => Promise<T>, cleanup = false): Promise<T> => {
+    const giveBack = await turns.take(jobId, { signal, cleanup });
     try {
       return await work();
     } finally {
@@ -77,7 +77,7 @@ export function createOpsClient(hooks: OpsClientHooks): OpsClient {
     }
   };
   return {
-    exclusive: inTurn,
+    exclusive: (work) => inTurn(work),
     async call<K extends OpName>(
       op: K,
       params: OpParamsMap[K],
@@ -113,7 +113,8 @@ export function createOpsClient(hooks: OpsClientHooks): OpsClient {
           hooks.onEnd(op);
         }
       };
-      return takesPageTurn(op) ? inTurn(run) : run();
+      // Closing the tab is the job's last step: a sibling's long turn may leave the tab open, never the job running.
+      return takesPageTurn(op) ? inTurn(run, op === 'conversation.close') : run();
     },
   };
 }

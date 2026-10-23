@@ -6,6 +6,7 @@ import {
 } from '@voyager-crew/bridge-protocol';
 
 import { ensureServe } from '../../client/serveClient';
+import type { ActiveJobView, ServeStatus } from '../../server/serveStatus';
 import type { StatePaths } from '../../state/paths';
 import { accountJson, describeAccount } from '../accountPlan';
 import { parse } from '../args';
@@ -14,7 +15,7 @@ import { note, printJson, printLine } from '../output';
 export async function statusCommand(paths: StatePaths, argv: readonly string[]): Promise<number> {
   const args = parse(argv, { json: { type: 'boolean', summary: 'JSON output' } });
   const client = await ensureServe(paths);
-  const status = await client.request<StatusResponse>('GET', BRIDGE_PATHS.status);
+  const status = await client.request<ServeStatus>('GET', BRIDGE_PATHS.status);
   if (args.options.json === true) {
     printJson({ ...status, port: client.port, ...accountJson(status.extension.account) });
     return 0;
@@ -38,18 +39,37 @@ export async function statusCommand(paths: StatePaths, argv: readonly string[]):
         : `, seen ${Math.max(0, Math.round((Date.now() - seenAt) / 60_000))} min ago`;
     printLine(`${describeAccount(ext.account)}${ext.account ? age : ''}`);
   }
-  const active = status.activeJobs ?? (status.activeJob === undefined ? [] : [status.activeJob]);
-  const named = active.map((job) => `${job.jobId}${job.op ? ` (${job.op})` : ''}`);
+  for (const line of statusJobLines(status)) printLine(line);
+  return 0;
+}
+
+/** The active jobs, and how many may run at once. */
+export function statusJobLines(status: ServeStatus): string[] {
+  const active: readonly ActiveJobView[] =
+    status.activeJobs ?? (status.activeJob === undefined ? [] : [status.activeJob]);
+  // Turns matter only between jobs: a job alone always has the page.
+  const turns = active.length > 1;
+  const named = active.map((job) => {
+    const turn = !turns
+      ? undefined
+      : job.pageTurn === 'holding'
+        ? 'has the page turn'
+        : job.pageTurn === 'waiting'
+          ? 'waiting for the page turn'
+          : undefined;
+    const notes = [job.op, turn].filter((part) => part !== undefined);
+    return `${job.jobId}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`;
+  });
   const label = named.length > 1 ? 'active jobs' : 'active job';
-  printLine(`${label}: ${named.length === 0 ? 'none' : named.join(', ')}`);
+  const lines = [`${label}: ${named.length === 0 ? 'none' : named.join(', ')}`];
   if (status.maxJobs !== undefined) {
-    printLine(
+    lines.push(
       status.maxJobs > 1
         ? `parallel jobs: up to ${status.maxJobs} at once`
         : 'parallel jobs: off (one job at a time; turn it on in the Voyager popup)',
     );
   }
-  return 0;
+  return lines;
 }
 
 export async function commandsCommand(paths: StatePaths, argv: readonly string[]): Promise<number> {
