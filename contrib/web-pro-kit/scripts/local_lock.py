@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import threading
@@ -22,6 +23,17 @@ POLL_SECONDS = 0.2
 def lock_dir() -> Path:
     base = Path(os.environ["VOYAGER_HOME"]) if os.environ.get("VOYAGER_HOME") else Path.home() / ".voyager"
     return base / "locks" / "web-pro-kit"
+
+
+def _private_lock_dir() -> Path:
+    """The lock folder, created 0700 like `~/.voyager` itself: its file names come from local paths."""
+    directory = lock_dir()
+    for path in (directory.parent.parent, directory.parent, directory):
+        path.mkdir(mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        for path in (directory.parent, directory):
+            os.chmod(path, 0o700)  # also one an earlier kit created with the default mode
+    return directory
 
 
 def _try_lock(handle) -> bool:
@@ -54,8 +66,7 @@ def _unlock(handle) -> None:
 @contextlib.contextmanager
 def held(target: Path, label: str, timeout: float):
     """Run the block while this process alone holds `target` (a REQUEST.md, a mirror folder)."""
-    directory = lock_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = _private_lock_dir()
     key = hashlib.sha256(str(Path(target).resolve()).encode("utf-8")).hexdigest()[:24]
     with open(directory / f"{key}.lock", "a+b") as handle:
         started, told = time.monotonic(), False
@@ -99,6 +110,9 @@ def selftest() -> int:
             checks += 1
         assert list(lock_dir().glob("*.lock")) and not target.parent.exists()
         checks += 1  # the lock stays local, out of the synced folder
+        if os.name != "nt":
+            assert all(stat.S_IMODE(p.stat().st_mode) == 0o700 for p in (lock_dir(), lock_dir().parent))
+            checks += 1  # only this user can list the lock folder
     print(f"selftest PASS: {checks} checks")
     return 0
 

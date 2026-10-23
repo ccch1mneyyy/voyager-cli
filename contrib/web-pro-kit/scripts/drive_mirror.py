@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 import mirror_build
 from mirror_build import build, commit_files, git, repo_root
 from mirror_manifest import build_manifest, layer_ok, new_layer, policy_fingerprint, print_summary, read_mirror, write_report
@@ -175,7 +176,8 @@ def selftest() -> int:
         checks += 1
     saved_chunk = mirror_build.CHUNK
     try:
-        with tempfile.TemporaryDirectory(prefix="drive-mirror-test-") as td:
+        # Its own VOYAGER_HOME: the push locks of a selftest never touch the real ~/.voyager.
+        with tempfile.TemporaryDirectory(prefix="drive-mirror-test-") as td, patch.dict(os.environ, {"VOYAGER_HOME": td}):
             root = Path(td)
             repo = root / "sample"
             (repo / "src").mkdir(parents=True)
