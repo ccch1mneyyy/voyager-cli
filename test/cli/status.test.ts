@@ -1,6 +1,8 @@
+import { bridgeError } from '@voyager-crew/bridge-protocol';
 import { describe, expect, it } from 'vitest';
 
 import { statusJobLines } from '../../src/cli/commands/info';
+import { busyNote } from '../../src/cli/commands/job';
 import type { ServeStatus } from '../../src/server/serveStatus';
 
 const NOW = 1_000_000;
@@ -69,5 +71,41 @@ describe('voyager status: parallel jobs', () => {
     expect(lines[0]).toBe(
       'active jobs: j1 (composer.send, has the page turn), j2 (turns.waitReply), j3 (waiting for the page turn)',
     );
+  });
+});
+
+describe('busy note', () => {
+  it('keeps the one-job-at-a-time words, and gives the reason once jobs run side by side', () => {
+    const one = bridgeError('busy', 'another job is running; it is not queued', {
+      activeJobId: 'j1',
+      maxJobs: 1,
+    });
+    expect(busyNote(one)).toBe(
+      'busy: job j1 is running. Wait with voyager job wait j1; jobs are not queued.',
+    );
+    const conflict = bridgeError(
+      'busy',
+      'job j2 is working on conversation c-1; it is not queued',
+      {
+        activeJobId: 'j2',
+        activeJobIds: ['j1', 'j2'],
+        maxJobs: 3,
+        conflict: 'conversation c-1',
+      },
+    );
+    expect(busyNote(conflict)).toBe(
+      'busy: job j2 is working on conversation c-1; it is not queued. Wait with voyager job wait j2.',
+    );
+    const full = bridgeError(
+      'busy',
+      '2 jobs are running, as many as may run at once; it is not queued',
+      {
+        activeJobId: 'j1',
+        activeJobIds: ['j1', 'j2'],
+        maxJobs: 2,
+      },
+    );
+    expect(busyNote(full)).toContain('as many as may run at once');
+    expect(busyNote(full)).toContain('(running: j1, j2)');
   });
 });
